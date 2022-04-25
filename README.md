@@ -63,7 +63,7 @@ Transformer 因為使用 Self-Attention 取代 RNN 或 CNN 處理序列資料有
 我們使用資料集的摘要作為 Reference 和機器生成摘要作為 Candidate，透過下列 BLEU 與 ROUGE 2 種指標來評估機器的表現，以下為 BLEU 與 ROUGE 的說明。
 
 - BLEU
-    - ![](https://imgur.com/a/ZSYXkRj)
+    - ![](https://imgur.com/ohYv39X)
     - 使用precision為主，並透過Sentence brevity penalty去避免candidate太短使分數太高的問題
     
 - ROUGE
