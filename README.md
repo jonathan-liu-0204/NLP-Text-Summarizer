@@ -63,11 +63,11 @@ Transformer 因為使用 Self-Attention 取代 RNN 或 CNN 處理序列資料有
 我們使用資料集的摘要作為 Reference 和機器生成摘要作為 Candidate，透過下列 BLEU 與 ROUGE 2 種指標來評估機器的表現，以下為 BLEU 與 ROUGE 的說明。
 
 - BLEU
-    - ![](https://imgur.com/ohYv39X)
+    - ![](https://i.imgur.com/UaEqylg.png)
     - 使用precision為主，並透過Sentence brevity penalty去避免candidate太短使分數太高的問題
     
 - ROUGE
-    - ![](https://imgur.com/1HJadju)
+    - ![](https://i.imgur.com/zS18m64.png)
     - 使用recall為主，此法會生成Rouge_1、Rouge_2、Rouge_L 3種分數，其差別分別是以1-gram、2-gram、longest common subsequence的形式去得到各自的單詞。
 
 - 也可以用F1-score去結合BLEU和ROUGE:
