@@ -149,7 +149,7 @@ train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
 # %%
 """
 Seq2Seq model consist of encoder and decoder.
-Hense, we will create three model encdoer, decoder and seq2seq
+Hence, we will create three model encdoer, decoder and seq2seq
 model which encapsulates encdoer and decoder.
 """
 
@@ -165,6 +165,7 @@ to generate prediction.
 """
 class Encoder(nn.Module):
     def __init__(self, input_dim, emb_dim, hidden_dim, n_layers, dropout, debug=False):
+        super().__init__()
 
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
@@ -175,7 +176,7 @@ class Encoder(nn.Module):
         embedding layer gives each token a dense embedding vector, and output
         a tensor with shape, (batch_size, sequence_length, embedding_dim).
 
-        input_dim: dimension of one-hot encoding of each token
+        input_dim: dimension of one-hot encoding of each token in source language
         emb_dim: dimension of embedding of each token
         """
         self.embedding = nn.Embedding(input_dim, emb_dim)
@@ -194,7 +195,7 @@ class Encoder(nn.Module):
         dropout, specifies how similar the hidden state output from layer(i) LSTM 
         and the input of layer(i+1) LSTM.
         """
-        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=dropout)
+        self.rnn = nn.LSTM(emb_dim, hidden_dim, n_layers, dropout=dropout)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -208,6 +209,12 @@ class Encoder(nn.Module):
             print(f'(in encoder\'s forward) embeded shape = {embeded.shape}')
 
         embeded = self.dropout(embeded)
+
+        """
+        outputs: hidden state of top layer lstm in all time steps
+        hidden_state: final hidden state of each layer lstm
+        cell state: final cell state of each layer lstm
+        """
         outputs, (hidden_state, cell_state) = self.rnn(embeded)
 
         if self.debug:
@@ -218,6 +225,129 @@ class Encoder(nn.Module):
         
         return hidden_state, cell_state
 
-        
-# %%
 
+# %%
+"""
+Decoder consists of following layers:
+- embedding
+- lstm_1
+- lstm_2
+
+The composition and operation of decoder are similar to them
+in encdoer. However, we use the final hidden state and cell state of
+each layer lstm in encoder to initialize each layer lstm in decoder.
+
+The hidden states of the top layer in decoder in all time steps
+are fed into a linear function to predict the new token.
+"""
+class Decoder(nn.Module):
+    def __init__(self, output_dim, emb_dim, hidden_dim, n_layers, dropout, debug=False):
+        super().__init__()
+
+        self.output_dim = output_dim
+        self.hidden_dim = hidden_dim
+        self.debug = debug
+        
+
+        """
+        output_dim: dimension of one-hot encoding of each token in target language
+        emb_dim: dimension of embedding of each token
+        """
+        self.embedding = nn.Embedding(output_dim, emb_dim)
+
+        """
+        emb_dim: dimension of each token
+        hid_dim: dimension of hidden state and cell state in LSTM
+        n_layers: number of LSTM which will be stacked on top of another one
+        """
+        self.rnn = nn.LSTM(emb_dim, hidden_dim, n_layers, dropout = dropout)
+
+        """
+        feed hidden states of top layer lstm to linear function to prediction
+        next token
+        """
+        self.fc_out = nn.Linear(hidden_dim, output_dim)
+        
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, input_batch, initial_hidden, initial_cell):
+        if self.debug:
+            print(f'(in decoder\'s forward) input_batch shape = {input_batch.shape}')
+        
+        input_batch = input_batch.unsqueeze(0)
+
+        if self.debug:
+            print(f'(in decoder\'s forward) input_batch (after unsqueeze) shape = {input_batch.shape}')
+
+        embeded = self.embedding(input_batch)
+        embeded = self.dropout(embeded)
+
+        if self.debug:
+            print(f'(in decoder\'s forward) embeded shape = {embeded.shape}')
+
+        
+        outputs, (hidden_state, cell_state) = self.rnn(embeded, (initial_hidden, initial_cell))
+
+        if self.debug:
+            print(f'(in decoder\'s forward) rnn output shape:')
+            print(f'\toutputs = {outputs.shape}')
+            print(f'\thidden_state = {hidden_state.shape}')
+            print(f'\tcell_state = {cell_state.shape}')
+
+        outputs = outputs.squeeze(0)
+
+        if self.debug:
+            print(f'(in decoder\'s forward) outputs (after squeeze) shape = {outputs.shape}')
+        
+        prediction = self.fc_out(outputs)
+
+        if self.debug:
+            print(f'(in decoder\'s forward) prediction shape = {prediction.shape}')
+        
+        return prediction, hidden_state, cell_state
+
+
+#%%
+"""
+try to feed some data to encdoer and decoder
+"""
+for batch in train_iterator:
+    first_batch = batch
+    break
+
+first_batch_src = first_batch.src
+first_batch_trg = first_batch.trg
+print(f'first_batch_src shape = {first_batch_src.shape}')
+print(f'first_batch_trg shape = {first_batch_trg.shape}')
+print()
+
+enc = Encoder(
+    input_dim = len(src_field.vocab), 
+    emb_dim = 256,
+    hidden_dim = 512,
+    n_layers = 2, 
+    dropout = 0.5,
+    debug = True).to(device)
+
+
+enc_hidden, enc_cell = enc(first_batch_src)
+print()
+print(f'enc_hidden shape = {enc_hidden.shape}')
+print(f'enc_cell shape = {enc_cell.shape}')
+print()
+
+dec = Decoder(
+    output_dim = len(trg_field.vocab), 
+    emb_dim = 256, 
+    hidden_dim = 512, 
+    n_layers = 2, 
+    dropout = 0.5,
+    debug = True).to(device)
+
+dec_input = first_batch_trg[0, :]
+prediction, dec_hidden, dec_cell = dec(dec_input, enc_hidden, enc_cell)
+print()
+print(f'prediction shape = {prediction.shape}')
+print(f'dec_hidden shape = {dec_hidden.shape}')
+print((f'dec_cell shape = {dec_cell.shape}'))
+# %%
