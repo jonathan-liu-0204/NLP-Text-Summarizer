@@ -19,8 +19,8 @@ is based on this tutorial (https://github.com/bentrevett/pytorch-seq2seq).
 #%%
 import torch
 import torch.nn as nn
-from torchtext.legacy.datasets import Multi30k
-from torchtext.legacy.data import Field, BucketIterator
+from torchtext.datasets import Multi30k
+from torchtext.data import Field, BucketIterator
 import spacy
 
 
@@ -188,7 +188,7 @@ class Encoder(nn.Module):
 
         emb_dim: dimension of each token
         hid_dim: dimension of hidden state and cell state in LSTM
-        n_layers: number of LSTM which will be stacked on top of another one
+        n_layers: number of LSTM which will be stacked on top of each other
 
         In multi-layer LSTM, in every time step, hidden state output from 
         layer(i) LSTM is the input of layer(i+1) LSTM. Hence, the argument, 
@@ -237,7 +237,7 @@ The composition and operation of decoder are similar to them
 in encdoer. However, we use the final hidden state and cell state of
 each layer lstm in encoder to initialize each layer lstm in decoder.
 
-The hidden states of the top layer in decoder in all time steps
+The hidden states of the top layer lstm in decoder in all time steps
 are fed into a linear function to predict the new token.
 """
 class Decoder(nn.Module):
@@ -350,4 +350,29 @@ print()
 print(f'prediction shape = {prediction.shape}')
 print(f'dec_hidden shape = {dec_hidden.shape}')
 print((f'dec_cell shape = {dec_cell.shape}'))
+
+
 # %%
+"""
+After building encoder and decoder, we want to create a seq2seq model
+which encapsulates these two models.
+
+The seq2seq model works as the following steps (in high level):
+1. input data fed into encoder
+2. encoder generates context vector
+3. decoder generates predicted data
+
+Note1: 
+Because we want to initialize the hidden state and cell state of lstm in decoder
+with the context vector produced by encoder, (context vector is just the final hidden state
+and cell state of each layer lstm in encoder) we must ensure the number of lstm layers and 
+dimesion in encoder are same as ones in decoder.
+
+Note2:
+In order to train our decoder quickly, we will make use of 'teacher-forcing' technique.
+Therefore, we should have a 'teacher forcing ratio'. With the probability equal to the teacher
+forcing ratio, we will use the actual ground-truth next token as the input of decoder. With the 
+probability equal to (1 - teacher forcing ratio), we will use the decoder's prediction as the next-step input.
+
+
+"""
