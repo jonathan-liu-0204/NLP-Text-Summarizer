@@ -19,6 +19,7 @@ is based on this tutorial (https://github.com/bentrevett/pytorch-seq2seq).
 #%%
 import torch
 import torch.nn as nn
+import random
 from torchtext.datasets import Multi30k
 from torchtext.data import Field, BucketIterator
 import spacy
@@ -120,7 +121,7 @@ print(f'number of unique tokens in target (en) language: {len(trg_field.vocab)}'
 # %%
 """
 At the final step of processing data,
-we have to convert the dataset into batches of exampl.
+we have to convert the dataset into batches of examples.
 
 We will create an Iterator which can be iterated on to 
 return a batch of data. 
@@ -246,6 +247,7 @@ class Decoder(nn.Module):
 
         self.output_dim = output_dim
         self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
         self.debug = debug
         
 
@@ -374,5 +376,48 @@ Therefore, we should have a 'teacher forcing ratio'. With the probability equal 
 forcing ratio, we will use the actual ground-truth next token as the input of decoder. With the 
 probability equal to (1 - teacher forcing ratio), we will use the decoder's prediction as the next-step input.
 
-
+Note3:
+We will use a loop to repeatly feed token to decoder, and store its predition in a big tensor.
+The first token fed to decoder is <sos>, decoder predicts the first output token y1. Until decoder predicts <eos>
+token, we ends the loop (we never feed <eos> token to decoder). Therefore, the target sequence is [<sos>, y1, y2, y3, <eos>] 
+but the predicted sequence is [0, y1, y2, y3, <eos>]. 
 """
+
+class Seq2Seq(nn.Module):
+
+    def __init__(self, encdoer, decoder, device):
+        super().__init__()
+
+        self.encoder = encoder
+        self.decoder = decoder
+        self.device = device
+
+        assert encoder.hidden_dim == decoder.hidden_dim, "Hidden dimension of LSTM in encoder and decoder should be equal"
+        assert encoder.n_layers == decoder.n_layers, "Number of LSTM in encoder and decoder should be equal"
+
+    def forward(self, source_batch, target_batch, teacher_forcing_ratio = 0.5):
+        
+        batch_size = target_batch[1]
+        target_length = target_batch[0]
+        target_vocab_size = self.decoder.output_dim
+
+        # a big tensor to store decoder's output
+        outputs = torch.zeros(target_length, batch_size, target_vocab_size)
+
+        # context vector of encoder to initialize decoder
+        hidden_state, cell_state = self.encoder(source_batch)
+
+        # first input token to decoder (<sos>)
+        input = source_batch[0, :]
+
+        for t in range(1, target_length):
+            output, hidden_state, cell_state = self.decoder(input, hidden_state, cell_state)
+            outputs[t] = output
+            
+            if random.random() < teacher_forcing_ratio:
+                input = target_batch[1, :]
+            else:
+                input = output.argmax(1)
+
+
+        
