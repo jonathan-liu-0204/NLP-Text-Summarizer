@@ -19,6 +19,7 @@ is based on this tutorial (https://github.com/bentrevett/pytorch-seq2seq).
 #%%
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import random
 from torchtext.datasets import Multi30k
 from torchtext.data import Field, BucketIterator
@@ -39,7 +40,7 @@ space_en = spacy.load("en_core_web_sm")
 tokenize sentence into list of tokens
 """
 
-def tokenize_de(text: str) -> list[str]:
+def tokenize_de(text):
     """
     why reverse the order of input text,
     you may refer to this article (https://stackoverflow.com/questions/51003992/why-do-we-reverse-input-when-feeding-in-seq2seq-model-in-tensorflow-tf-reverse).
@@ -47,7 +48,7 @@ def tokenize_de(text: str) -> list[str]:
     tokens = spacy_de.tokenizer(text)
     return [tok.text for tok in tokens][::-1]
 
-def tokenize_en(text: str) -> list[str]:
+def tokenize_en(text):
     tokens = space_en.tokenizer(text)
     return [tok.text for tok in tokens]
 
@@ -138,7 +139,8 @@ to minimize amount of padding needed in one batch.
 In order to train model with gpu, we can move data (tensor) to gpu.
 """
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("mps")
 
 train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
     (train_data, valid_data, test_data),
@@ -385,7 +387,7 @@ but the predicted sequence is [0, y1, y2, y3, <eos>].
 
 class Seq2Seq(nn.Module):
 
-    def __init__(self, encdoer, decoder, device):
+    def __init__(self, encoder, decoder, device):
         super().__init__()
 
         self.encoder = encoder
@@ -415,9 +417,82 @@ class Seq2Seq(nn.Module):
             outputs[t] = output
             
             if random.random() < teacher_forcing_ratio:
-                input = target_batch[1, :]
+                input = target_batch[t, :]
             else:
                 input = output.argmax(1)
 
 
         
+
+# %%
+"""
+After declaring the class of seq2seq model, we want to initialize it. We have to initialze encdoer and decoder,
+and feed them to seq2seq model. 
+"""
+
+INPUT_DIM = len(src_field.vocab)
+OUTPUT_DIM = len(trg_field.vocab)
+ENC_EMB_DIM = 256
+DEC_EMB_DIM = 256
+LSTM_HIDDEN_DIM = 512
+LSTM_NUM_LAYER = 2
+ENC_DROPOUT = 0.5
+DEC_DROPOUT = 0.5
+
+enc = Encoder(
+    input_dim = INPUT_DIM, 
+    emb_dim = ENC_EMB_DIM,
+    hidden_dim = LSTM_HIDDEN_DIM,
+    n_layers = LSTM_NUM_LAYER, 
+    dropout = ENC_DROPOUT)
+
+dec = Decoder(
+    output_dim = OUTPUT_DIM, 
+    emb_dim = DEC_EMB_DIM, 
+    hidden_dim = LSTM_HIDDEN_DIM, 
+    n_layers = LSTM_NUM_LAYER, 
+    dropout = DEC_DROPOUT)
+
+model = Seq2Seq(
+    encoder=enc,
+    decoder=dec,
+    device=device
+).to(device)
+
+
+#%%
+"""
+In the paper, they initialize the all weights of model from a uniform distribution between -0.08 and +0.08.
+We apply model on a function to initialize the weights. Every module in model will apply on this function.
+"""
+
+def init_weights(mod):
+    print(f"module: {mod}")
+    for name, param in mod.named_parameters():
+        nn.init.uniform_(param.data, -0.08, 0.08)
+
+model.apply(init_weights)
+
+
+# %%
+"""
+We can also calculate the number of trainable paramaters in model.
+"""
+
+def count_parameters(model):
+    return sum([param.numel() for param in model.parameters() if param.requires_grad])
+
+print(f"Number of trainable parameters: {count_parameters(model)}")
+
+
+#%%
+"""
+We use Adam as optimizer to optimize parameters in model
+"""
+optimizer = optim.Adam(model.parameters())
+
+
+# %%
+"""
+
+"""
