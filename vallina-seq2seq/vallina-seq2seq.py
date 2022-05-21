@@ -492,7 +492,18 @@ We use Adam as optimizer to optimize parameters in model
 optimizer = optim.Adam(model.parameters())
 
 
-# %%
+#%%
+"""
+Because the decoder's prediction is a classification problem, we use CrossEntropy as the loss function
+to calculate loss. However, if current groundtruth token is <pad>, we should not calculate the loss of this prediction.
+"""
+
+target_pad_token = trg_field.pad_token
+target_pad_token_idx = trg_field.vocab.stoi[target_pad_token]
+criterion = nn.CrossEntropyLoss(ignore_index=target_pad_token_idx)
+
+
+#%%
 """
 
 """
