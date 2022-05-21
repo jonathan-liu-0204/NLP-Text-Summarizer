@@ -58,7 +58,8 @@ TRG.build_vocab(train_data, min_freq = 2)
 
 
 # cuda or cpu
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+print("using ", device)
 
 # Create the iterators.
 BATCH_SIZE = 128
