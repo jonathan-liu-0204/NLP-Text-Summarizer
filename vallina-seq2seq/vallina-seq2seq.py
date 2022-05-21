@@ -505,5 +505,65 @@ criterion = nn.CrossEntropyLoss(ignore_index=target_pad_token_idx)
 
 #%%
 """
+Finally, we want to define a train() function containing a loop to train our model. In the loop: 
 
+1. We will feed a input batch (shape = [num_token, batch_size]) to model, and get output batch (shape = [num_token, batch_size, output dim]). 
+We should calculate loss between output batch (shape = [num_token, batch_size, output dim]) and target batch (shape = [num_token, batch_size]).
+
+2. As metioned above, if we focus on a example instead of batch of examples, the model's output is [0, y1, y2, y3, <eos>], but the target is [<sos>, y1, y2, y3, <eos>].
+Therefore, we want to slice out the first token in model's output and target.
+
+3. However, the loss function in pytorch accepts 2-dimension input and 1-dimension taregt, we reshape the tensor with view() method.
+
+4. After getting loss of this batch, we calculate gradient of loss with respect to all parameters.
+
+5. In order to prevent gradient explode / vanish in rnn, we clip the gradient.
+
+6. Update parameters with gradients
 """
+
+def train(model, iterator, optimizer, criterion, clip):
+
+    # change model to train mode
+    model.train()
+
+    epoch_loss = 0
+
+    for i, batch in enumerate(iterator):
+
+        src_batch = batch.src # shape = [num_token, batch_size]
+        trg_batch = batch.trg # shape = [num_token, batch_size]
+
+        # reset gradient
+        optimizer.zero_grad()
+
+        output = model(src_batch, trg_batch)
+        # output's shape = [num_token, batch_size, output_dim]
+
+        # slice out first token in model's output and target
+        output = output[1:]
+        trg_batch = trg_batch[1:]
+
+        # reshape model's output to 2-dimension, target to 1-dimension
+        output_dim = output.shape[-1]
+        output = output.view(-1, output_dim)
+        trg_batch = trg_batch.view(-1)
+
+        # calculate loss
+        loss = criterion(output, trg_batch)
+
+        # calculate gradient of loss with respect to all parameters
+        loss.backward()
+
+        # clip gradient
+        torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+
+        # update weights
+        optimizer.step()
+
+        epoch_loss += loss.item()
+    
+    return epoch_loss / len(iterator)
+
+
+#%%
