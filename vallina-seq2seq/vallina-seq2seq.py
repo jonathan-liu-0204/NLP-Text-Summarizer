@@ -141,8 +141,8 @@ to minimize amount of padding needed in one batch.
 In order to train model with gpu, we can move data (tensor) to gpu.
 """
 
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device("cpu")
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device = torch.device("cpu")
 
 train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
     (train_data, valid_data, test_data),
