@@ -682,6 +682,8 @@ for epoch in range(N_EPOCHS):
     print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
     print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
 
+
+
 #%%
 model.load_state_dict(torch.load('vallina-seq2seq.pt'))
 test_loss = evaluate(model, test_iterator, criterion)
