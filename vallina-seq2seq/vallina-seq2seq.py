@@ -17,6 +17,8 @@ is based on this tutorial (https://github.com/bentrevett/pytorch-seq2seq).
 
 
 #%%
+import time
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -140,7 +142,7 @@ In order to train model with gpu, we can move data (tensor) to gpu.
 """
 
 # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device("mps")
+device = torch.device("cpu")
 
 train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
     (train_data, valid_data, test_data),
@@ -399,28 +401,44 @@ class Seq2Seq(nn.Module):
 
     def forward(self, source_batch, target_batch, teacher_forcing_ratio = 0.5):
         
-        batch_size = target_batch[1]
-        target_length = target_batch[0]
+        batch_size = target_batch.shape[1]
+        target_length = target_batch.shape[0]
         target_vocab_size = self.decoder.output_dim
 
+        # print(f"[seq2seq forward] source_batch shape: {source_batch.shape}")
+        # print(f"[seq2seq forward] target_batch shape: {target_batch.shape}")
+
         # a big tensor to store decoder's output
-        outputs = torch.zeros(target_length, batch_size, target_vocab_size)
+        outputs = torch.zeros(target_length, batch_size, target_vocab_size).to(self.device)
+        # print(f"[seq2seq forward] outputs shape: {outputs.shape}")
 
         # context vector of encoder to initialize decoder
         hidden_state, cell_state = self.encoder(source_batch)
+        # print(f"[seq2seq forward] hidden_state shape: {hidden_state.shape}")
+        # print(f"[seq2seq forward] cell_state shape: {cell_state.shape}")
 
         # first input token to decoder (<sos>)
         input = source_batch[0, :]
 
         for t in range(1, target_length):
+            # print(f"[seq2seq forward] t: {t}")
+
+            # print(f"[seq2seq forward] input shape: {input.shape}")
             output, hidden_state, cell_state = self.decoder(input, hidden_state, cell_state)
+
+            # print(f"[seq2seq forward] output shape: {output.shape}")
+            # print(f"[seq2seq forward] hidden_state shape: {hidden_state.shape}")
+            # print(f"[seq2seq forward] cell_state shape: {cell_state.shape}")
+
             outputs[t] = output
             
             if random.random() < teacher_forcing_ratio:
                 input = target_batch[t, :]
             else:
                 input = output.argmax(1)
-
+        
+        # print(f"[seq2seq forward] outputs shape: {outputs.shape}")
+        return outputs
 
         
 
@@ -485,6 +503,7 @@ def count_parameters(model):
 print(f"Number of trainable parameters: {count_parameters(model)}")
 
 
+
 #%%
 """
 We use Adam as optimizer to optimize parameters in model
@@ -530,7 +549,7 @@ def train(model, iterator, optimizer, criterion, clip):
     epoch_loss = 0
 
     for i, batch in enumerate(iterator):
-
+    
         src_batch = batch.src # shape = [num_token, batch_size]
         trg_batch = batch.trg # shape = [num_token, batch_size]
 
@@ -562,8 +581,108 @@ def train(model, iterator, optimizer, criterion, clip):
         optimizer.step()
 
         epoch_loss += loss.item()
+
+        print(f"Batch: {i+1:03}/{len(iterator)}, loss: {loss.item()}")
+
     
     return epoch_loss / len(iterator)
 
 
 #%%
+"""
+In addition to training model, we also evaluate model. The evaluate() function is similar to train(), except for the key difference:
+not updating parameters. Therefore, we will not use optimizer in evaluate() function.
+"""
+
+def evaluate(model, iterator, criterion):
+
+    # change model to evaluation mode
+    model.eval()
+
+    epoch_loss = 0
+
+    # because we do not update parameters in model, using torch.no_grad() will speed up execution.
+    with torch.no_grad():
+
+        for i, batch in enumerate(iterator):
+
+            src_batch = batch.src # shape = [num_token, batch_size]
+            trg_batch = batch.trg # shape = [num_token, batch_size]
+
+            # reset gradient
+            # optimizer.zero_grad()
+
+            output = model(src_batch, trg_batch, 0) # turn off teacher forcing
+            # output's shape = [num_token, batch_size, output_dim]
+
+            # slice out first token in model's output and target
+            output = output[1:]
+            trg_batch = trg_batch[1:]
+
+            # reshape model's output to 2-dimension, target to 1-dimension
+            output_dim = output.shape[-1]
+            output = output.view(-1, output_dim)
+            trg_batch = trg_batch.view(-1)
+
+            # calculate loss
+            loss = criterion(output, trg_batch)
+
+            # calculate gradient of loss with respect to all parameters
+            # loss.backward()
+
+            # clip gradient
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+
+            # update weights
+            # optimizer.step()
+
+            epoch_loss += loss.item()
+
+    return epoch_loss / len(iterator)
+
+
+# %%
+"""
+We use a function to estimate the time of epoch.
+"""
+def epoch_time(start_time, end_time):
+    elapsed_time = end_time - start_time
+    elapsed_mins = int(elapsed_time / 60)
+    elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
+    return elapsed_mins, elapsed_secs
+
+
+#%%
+"""
+We start training seq2seq model! In each epoch, we check the loss of validation, if it is the best one so far, 
+we will save the current model.
+"""
+
+N_EPOCHS = 10
+CLIP = 1
+
+best_valid_loss = float('inf')
+
+for epoch in range(N_EPOCHS):
+
+    t1 = time.time()
+
+    train_loss = train(model, train_iterator, optimizer, criterion, CLIP)
+    valid_loss = evaluate(model, valid_iterator, criterion)
+
+    t2 = time.time()
+
+    epoch_mins, epoch_secs = epoch_time(t1, t2)
+
+    if valid_loss < best_valid_loss:
+        best_valid_loss = valid_loss
+        torch.save(model.state_dict(), "vallina-seq2seq.pt")
+    
+    print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
+    print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
+    print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
+
+#%%
+model.load_state_dict(torch.load('vallina-seq2seq.pt'))
+test_loss = evaluate(model, test_iterator, criterion)
+print(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} |')# %%
