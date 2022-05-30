@@ -48,7 +48,7 @@ SRC.build_vocab(train_data, min_freq = 2)
 TRG.build_vocab(train_data, min_freq = 2)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# print(device)
+print(device)
 
 BATCH_SIZE = 128
 
@@ -546,6 +546,8 @@ def evaluate(model, iterator, criterion):
             loss = criterion(output, trg)
 
             epoch_loss += loss.item()
+    
+    return epoch_loss / len(iterator)
 
 
 def epoch_time(start_time, end_time):
@@ -556,7 +558,7 @@ def epoch_time(start_time, end_time):
 
 
 
-N_EPOCHS = 10
+N_EPOCHS = 100
 CLIP = 1
 
 best_valid_loss = float('inf')
