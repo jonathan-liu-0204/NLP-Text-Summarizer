@@ -15,19 +15,104 @@ Sequence to Sequence Learning with Neural Networks
 is based on this tutorial (https://github.com/bentrevett/pytorch-seq2seq).
 """
 
-
 #%%
 import time
 import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.nn.utils.rnn import pad_sequence
 import random
-from torchtext.datasets import Multi30k
-from torchtext.data import Field, BucketIterator
+from torchtext.data import BucketIterator
+from torch.utils.data import Dataset
 import spacy
+import pandas as pd
+from tqdm import tqdm
 
+"""
+Create a custom dataset for cnn_daily.
+"""
+#%%
+class CNNDailyDataset(Dataset):
 
+    def __init__(self, path, transforms, vocabs):
+
+        self.transform_src = transforms[0]
+        self.transform_trg = transforms[1]
+
+        self.srcs = []
+        self.trgs = []
+
+        print(f"Load dataset: {path}")
+        df = pd.read_csv(path)
+        print(f"Transform dataset")
+        for idx, row in tqdm(df.iterrows(), total=df.shape[0]):
+            self.srcs.append(self.transform_src(row['article']))
+            self.trgs.append(self.transform_trg(row['highlights']))
+        
+        if vocabs != None:
+            self.vocab_stoi = vocabs[0]
+            self.vocab_itos = vocabs[1]
+        else:
+            self.vocab_stoi = {}
+            self.vocab_itos = {}
+            print(f"Build vocab table")
+            self.build_vocab()
+
+    def __len__(self):
+        return len(self.srcs)
+    
+    def __getitem__(self, index):
+
+        src = []
+        for token in self.srcs[index]:
+            if token in self.vocab_stoi:
+                src.append(self.vocab_stoi[token])
+            else:
+                src.append(self.vocab_stoi["<unk>"])
+        
+        trg = []
+        for token in self.trgs[index]:
+            if token in self.vocab_stoi:
+                trg.append(self.vocab_stoi[token])
+            else:
+                trg.append(self.vocab_stoi["<unk>"])
+
+        return {'src': src, 'trg': trg}
+
+    def build_vocab(self):
+        dict = {}
+        for sent in self.srcs:
+            for token in sent:
+                if token not in dict:
+                    dict[token] = 1
+                else:
+                    dict[token] += 1
+        for sent in self.trgs:
+            for token in sent:
+                if token not in dict:
+                    dict[token] = 1
+                else:
+                    dict[token] += 1
+        count = 0
+        for key, value in dict.items():
+            if value > 100:
+                self.vocab_stoi[key] = count
+                self.vocab_itos[count] = key
+                count += 1
+        self.vocab_stoi["<unk>"] = count
+        self.vocab_itos[count] = "<unk>"
+        count += 1
+        self.vocab_stoi["<pad>"] = count
+        self.vocab_itos[count] = "<pad>"
+        
+    
+    def pad_batch(self, batch):
+        src_tensors = [torch.tensor(emp['src']) for emp in batch]
+        trg_tensors = [torch.tensor(emp['trg']) for emp in batch]
+        return pad_sequence(src_tensors, padding_value=self.vocab_stoi["<pad>"]), pad_sequence(trg_tensors, padding_value=self.vocab_stoi["<pad>"])
+
+    
 # %%
 """
 load spacy model according to the language 
@@ -36,90 +121,44 @@ used in dataset (English and German)
 spacy_de = spacy.load("de_core_news_sm")
 space_en = spacy.load("en_core_web_sm")
 
+def transform_src(text):
+    tokens = spacy_de.tokenizer(text.lower())
+    tokens = [tok.text for tok in tokens]
+    tokens = ['<sos>'] + tokens + ['<eos>']
+    return tokens
 
-# %%
-"""
-tokenize sentence into list of tokens
-"""
+def transform_trg(text):
+    tokens = space_en.tokenizer(text.lower())
+    tokens = [tok.text for tok in tokens]
+    tokens = ['<sos>'] + tokens + ['<eos>']
+    return tokens
 
-def tokenize_de(text):
-    """
-    why reverse the order of input text,
-    you may refer to this article (https://stackoverflow.com/questions/51003992/why-do-we-reverse-input-when-feeding-in-seq2seq-model-in-tensorflow-tf-reverse).
-    """
-    tokens = spacy_de.tokenizer(text)
-    return [tok.text for tok in tokens][::-1]
-
-def tokenize_en(text):
-    tokens = space_en.tokenizer(text)
-    return [tok.text for tok in tokens]
-
-
-# %%
-"""
-pytoch's Field is like a text processor,
-we create two Field for source text and target text.
-
-With torchtext's Field, we convert a sentence into
-a list of tokens, insert <sos> token at the beginning of list,
-and append <eos> at the end.
-
-Finally, we convert all the tokens in list to lowercase.
-"""
-
-src_field = Field(
-    tokenize = tokenize_de,
-    init_token = '<sos>',
-    eos_token = '<eos>',
-    lower = True
+train_dataset = CNNDailyDataset(
+    path="../cnn_daily_ds/train.csv",
+    transforms=(transform_src, transform_trg),
+    vocabs=None
 )
 
-trg_field = Field(
-    tokenize = tokenize_en,
-    init_token = '<sos>',
-    eos_token = '<eos>',
-    lower = True
+valid_dataset = CNNDailyDataset(
+    path="../cnn_daily_ds/valid.csv",
+    transforms=(transform_src, transform_trg),
+    vocabs=(train_dataset.vocab_stoi, train_dataset.vocab_itos)
 )
 
-
-# %%
+#%%
 """
-The dataset we use is Multi30k which is
-imported from torchtext datasets.
-
-Use exts = (src, trg) to specify source and target data,
-and fields to process dataset.
-"""
-train_data, valid_data, test_data = Multi30k.splits(
-    exts = ('.de', '.en'),
-    fields = (src_field, trg_field)
-)
-
-print(f'number of training example: {len(train_data)}')
-print((f'number of validation example: {len(valid_data)}'))
-print((f'number of testing example: {len(test_data)}'))
-
-print(f'\n#1 example in traning examples: ')
-print(f'src: {train_data.examples[0].src}')
-print(f'trg: {train_data.examples[0].trg}')
-
-
-# %%
-"""
-Instead of using word as token, we have to build vocabulary
-table to convert word token into integer token.
-
-Source language and target language have their own vocabulary
-table, and we only allow the word tokens appear at least 2 times
-to allow in vocabulary table.
+Hyperparameter
 """
 
-src_field.build_vocab(train_data, min_freq = 2)
-trg_field.build_vocab(train_data, min_freq = 2)
-
-print(f'number of unique tokens in source (de) language: {len(src_field.vocab)}')
-print(f'number of unique tokens in target (en) language: {len(trg_field.vocab)}')
-
+INPUT_DIM = len(train_dataset.vocab_stoi)
+OUTPUT_DIM = len(train_dataset.vocab_stoi)
+ENC_EMB_DIM = 256
+DEC_EMB_DIM = 256
+LSTM_HIDDEN_DIM = 512
+LSTM_NUM_LAYER = 2
+ENC_DROPOUT = 0.5
+DEC_DROPOUT = 0.5
+BATCH_SIZE = 32
 
 # %%
 """
@@ -142,12 +181,27 @@ In order to train model with gpu, we can move data (tensor) to gpu.
 """
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# device = torch.device("cpu")
 
-train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
-    (train_data, valid_data, test_data),
-    batch_size = 128,
-    device = device
+train_iterator = BucketIterator(
+    train_dataset,
+    batch_size = BATCH_SIZE,
+    device = device,
+    sort_key=lambda x: len(x['src']),
+    repeat=True,
+    sort=False,
+    shuffle=True,
+    sort_within_batch=True
+)
+
+valid_iterator = BucketIterator(
+    valid_dataset,
+    batch_size = BATCH_SIZE,
+    device = device,
+    sort_key=lambda x: len(x['src']),
+    repeat=True,
+    sort=False,
+    shuffle=True,
+    sort_within_batch=True
 )
 
 
@@ -313,51 +367,6 @@ class Decoder(nn.Module):
         return prediction, hidden_state, cell_state
 
 
-#%%
-"""
-try to feed some data to encdoer and decoder
-"""
-for batch in train_iterator:
-    first_batch = batch
-    break
-
-first_batch_src = first_batch.src
-first_batch_trg = first_batch.trg
-print(f'first_batch_src shape = {first_batch_src.shape}')
-print(f'first_batch_trg shape = {first_batch_trg.shape}')
-print()
-
-enc = Encoder(
-    input_dim = len(src_field.vocab), 
-    emb_dim = 256,
-    hidden_dim = 512,
-    n_layers = 2, 
-    dropout = 0.5,
-    debug = True).to(device)
-
-
-enc_hidden, enc_cell = enc(first_batch_src)
-print()
-print(f'enc_hidden shape = {enc_hidden.shape}')
-print(f'enc_cell shape = {enc_cell.shape}')
-print()
-
-dec = Decoder(
-    output_dim = len(trg_field.vocab), 
-    emb_dim = 256, 
-    hidden_dim = 512, 
-    n_layers = 2, 
-    dropout = 0.5,
-    debug = True).to(device)
-
-dec_input = first_batch_trg[0, :]
-prediction, dec_hidden, dec_cell = dec(dec_input, enc_hidden, enc_cell)
-print()
-print(f'prediction shape = {prediction.shape}')
-print(f'dec_hidden shape = {dec_hidden.shape}')
-print((f'dec_cell shape = {dec_cell.shape}'))
-
-
 # %%
 """
 After building encoder and decoder, we want to create a seq2seq model
@@ -448,15 +457,6 @@ After declaring the class of seq2seq model, we want to initialize it. We have to
 and feed them to seq2seq model. 
 """
 
-INPUT_DIM = len(src_field.vocab)
-OUTPUT_DIM = len(trg_field.vocab)
-ENC_EMB_DIM = 256
-DEC_EMB_DIM = 256
-LSTM_HIDDEN_DIM = 512
-LSTM_NUM_LAYER = 2
-ENC_DROPOUT = 0.5
-DEC_DROPOUT = 0.5
-
 enc = Encoder(
     input_dim = INPUT_DIM, 
     emb_dim = ENC_EMB_DIM,
@@ -516,9 +516,7 @@ optimizer = optim.Adam(model.parameters())
 Because the decoder's prediction is a classification problem, we use CrossEntropy as the loss function
 to calculate loss. However, if current groundtruth token is <pad>, we should not calculate the loss of this prediction.
 """
-
-target_pad_token = trg_field.pad_token
-target_pad_token_idx = trg_field.vocab.stoi[target_pad_token]
+target_pad_token_idx =  train_dataset.vocab_stoi["<pad>"]
 criterion = nn.CrossEntropyLoss(ignore_index=target_pad_token_idx)
 
 
@@ -548,10 +546,12 @@ def train(model, iterator, optimizer, criterion, clip):
 
     epoch_loss = 0
 
-    for i, batch in enumerate(iterator):
-    
-        src_batch = batch.src # shape = [num_token, batch_size]
-        trg_batch = batch.trg # shape = [num_token, batch_size]
+    iterator.create_batches()
+    i = 0
+    for batch in iterator.batches:
+
+        src_batch, trg_batch = train_dataset.pad_batch(batch)
+        # shape = [num_token, batch_size]
 
         # reset gradient
         optimizer.zero_grad()
@@ -583,7 +583,7 @@ def train(model, iterator, optimizer, criterion, clip):
         epoch_loss += loss.item()
 
         print(f"Batch: {i+1:03}/{len(iterator)}, loss: {loss.item()}")
-
+        i += 1
     
     return epoch_loss / len(iterator)
 
@@ -600,17 +600,15 @@ def evaluate(model, iterator, criterion):
     model.eval()
 
     epoch_loss = 0
-
+    
     # because we do not update parameters in model, using torch.no_grad() will speed up execution.
     with torch.no_grad():
 
-        for i, batch in enumerate(iterator):
+        iterator.create_batches()
+        i = 1
+        for batch in iterator.batches:
 
-            src_batch = batch.src # shape = [num_token, batch_size]
-            trg_batch = batch.trg # shape = [num_token, batch_size]
-
-            # reset gradient
-            # optimizer.zero_grad()
+            src_batch, trg_batch = valid_dataset.pad_batch(batch)
 
             output = model(src_batch, trg_batch, 0) # turn off teacher forcing
             # output's shape = [num_token, batch_size, output_dim]
@@ -627,16 +625,11 @@ def evaluate(model, iterator, criterion):
             # calculate loss
             loss = criterion(output, trg_batch)
 
-            # calculate gradient of loss with respect to all parameters
-            # loss.backward()
-
-            # clip gradient
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
-
-            # update weights
-            # optimizer.step()
-
             epoch_loss += loss.item()
+
+            if i%10 == 0:
+                print(f"Batch: {i+1:03}/{len(iterator)}, loss: {loss.item()}")
+            i += 1
 
     return epoch_loss / len(iterator)
 
@@ -667,7 +660,10 @@ for epoch in range(N_EPOCHS):
 
     t1 = time.time()
 
+    print("Train")
     train_loss = train(model, train_iterator, optimizer, criterion, CLIP)
+
+    print("Evaluate")
     valid_loss = evaluate(model, valid_iterator, criterion)
 
     t2 = time.time()
@@ -681,10 +677,4 @@ for epoch in range(N_EPOCHS):
     print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
     print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
     print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
-
-
-
-#%%
-model.load_state_dict(torch.load('vallina-seq2seq.pt'))
-test_loss = evaluate(model, test_iterator, criterion)
-print(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} |')# %%
+# %%
