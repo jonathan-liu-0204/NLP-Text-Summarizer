@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
 
-from torchtext.legacy.datasets import Multi30k
-from torchtext.legacy.data import Field, BucketIterator
+from torchtext.data import BucketIterator
+from torch.utils.data import Dataset
 
 import spacy
 import numpy as np
@@ -13,60 +14,149 @@ import random
 import math
 import time
 
+import pandas as pd
+from tqdm import tqdm
 
-#Set the random seeds for reproducability.
-SEED = 1234
+class CNNDailyDataset(Dataset):
 
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.backends.cudnn.deterministic = True
+    def __init__(self, path, transforms, vocabs):
+
+        self.transform_src = transforms[0]
+        self.transform_trg = transforms[1]
+
+        self.srcs = []
+        self.trgs = []
+
+        print(f"Load dataset: {path}")
+        df = pd.read_csv(path)
+        print(f"Transform dataset")
+        for idx, row in tqdm(df.iterrows(), total=df.shape[0]):
+            article = self.transform_src(row['article'])
+            article = article[:256] + article[-256:]
+            self.srcs.append(article)
+            self.trgs.append(self.transform_trg(row['highlights']))
+        
+        if vocabs != None:
+            self.vocab_stoi = vocabs[0]
+            self.vocab_itos = vocabs[1]
+        else:
+            self.vocab_stoi = {}
+            self.vocab_itos = {}
+            print(f"Build vocab table")
+            self.build_vocab()
+
+    def __len__(self):
+        return len(self.srcs)
+    
+    def __getitem__(self, index):
+
+        src = []
+        for token in self.srcs[index]:
+            if token in self.vocab_stoi:
+                src.append(self.vocab_stoi[token])
+            else:
+                src.append(self.vocab_stoi["<unk>"])
+        
+        trg = []
+        for token in self.trgs[index]:
+            if token in self.vocab_stoi:
+                trg.append(self.vocab_stoi[token])
+            else:
+                trg.append(self.vocab_stoi["<unk>"])
+
+        return {'src': src, 'trg': trg}
+
+    def build_vocab(self):
+        dict = {}
+        for sent in self.srcs:
+            for token in sent:
+                if token not in dict:
+                    dict[token] = 1
+                else:
+                    dict[token] += 1
+        for sent in self.trgs:
+            for token in sent:
+                if token not in dict:
+                    dict[token] = 1
+                else:
+                    dict[token] += 1
+        count = 0
+        for key, value in dict.items():
+            if value > 100:
+                self.vocab_stoi[key] = count
+                self.vocab_itos[count] = key
+                count += 1
+        self.vocab_stoi["<unk>"] = count
+        self.vocab_itos[count] = "<unk>"
+        count += 1
+        self.vocab_stoi["<pad>"] = count
+        self.vocab_itos[count] = "<pad>"
+        
+    
+    def pad_batch(self, batch):
+        src_tensors = [torch.tensor(emp['src']) for emp in batch]
+        trg_tensors = [torch.tensor(emp['trg']) for emp in batch]
+        return pad_sequence(src_tensors, padding_value=self.vocab_stoi["<pad>"]), pad_sequence(trg_tensors, padding_value=self.vocab_stoi["<pad>"])
 
 
-#Load the German and English spaCy models.
-spacy_de = spacy.load('de_core_news_sm')
-spacy_en = spacy.load('en_core_web_sm')
+spacy_en = spacy.load("en_core_web_sm")
+
+def transform_src(text):
+    tokens = spacy_en.tokenizer(text.lower())
+    tokens = [tok.text for tok in tokens]
+    tokens = ['<sos>'] + tokens + ['<eos>']
+    return tokens
+
+def transform_trg(text):
+    tokens = spacy_en.tokenizer(text.lower())
+    tokens = [tok.text for tok in tokens]
+    tokens = ['<sos>'] + tokens + ['<eos>']
+    return tokens
+
+train_dataset = CNNDailyDataset(
+    path="../cnn_daily_ds/train.csv",
+    transforms=(transform_src, transform_trg),
+    vocabs=None
+)
+
+valid_dataset = CNNDailyDataset(
+    path="../cnn_daily_ds/valid.csv",
+    transforms=(transform_src, transform_trg),
+    vocabs=(train_dataset.vocab_stoi, train_dataset.vocab_itos)
+)
+
+"""Define the device."""
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Current device: {device}")
+
+"""Create the iterators."""
+
+BATCH_SIZE = 32
+
+train_iterator = BucketIterator(
+    train_dataset,
+    batch_size = BATCH_SIZE,
+    device = device,
+    sort_key=lambda x: len(x['src']),
+    repeat=True,
+    sort=False,
+    shuffle=True,
+    sort_within_batch=True
+)
+
+valid_iterator = BucketIterator(
+    valid_dataset,
+    batch_size = BATCH_SIZE,
+    device = device,
+    sort_key=lambda x: len(x['src']),
+    repeat=True,
+    sort=False,
+    shuffle=True,
+    sort_within_batch=True
+)
 
 
-#create the tokenizers.
-def tokenize_de(text):
-    """
-    Tokenizes German text from a string into a list of strings
-    """
-    return [tok.text for tok in spacy_de.tokenizer(text)]
-
-def tokenize_en(text):
-    """
-    Tokenizes English text from a string into a list of strings
-    """
-    return [tok.text for tok in spacy_en.tokenizer(text)]
-
-
-# the fields
-SRC = Field(tokenize = tokenize_de, init_token = '<sos>', eos_token = '<eos>', lower = True)
-TRG = Field(tokenize = tokenize_en, init_token = '<sos>', eos_token = '<eos>', lower = True)
-
-
-# load all the data
-train_data, valid_data, test_data = Multi30k.splits(exts = ('.de', '.en'), fields = (SRC, TRG))
-
-
-# build the vocabulary
-SRC.build_vocab(train_data, min_freq = 2)
-TRG.build_vocab(train_data, min_freq = 2)
-
-
-# cuda or cpu
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print("using ", device)
-
-# Create the iterators.
-BATCH_SIZE = 128
-train_iterator, valid_iterator, test_iterator = BucketIterator.splits((train_data, valid_data, test_data), batch_size = BATCH_SIZE, device = device)
-
-
-# Encoder
 class Encoder(nn.Module):
     def __init__(self, input_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout):
         super().__init__()
@@ -107,7 +197,7 @@ class Encoder(nn.Module):
         
         return outputs, hidden
 
-# Attention Layer
+
 class Attention(nn.Module):
     def __init__(self, enc_hid_dim, dec_hid_dim):
         super().__init__()
@@ -131,7 +221,9 @@ class Attention(nn.Module):
         #hidden = [batch size, src len, dec hid dim]
         #encoder_outputs = [batch size, src len, enc hid dim * 2]
         
-        energy = torch.tanh(self.attn(torch.cat((hidden, encoder_outputs), dim = 2))) 
+        tmp = torch.cat((hidden, encoder_outputs), dim = 2)
+        # print(f"<debug> tmp shape = {tmp.shape}")
+        energy = torch.tanh(self.attn(tmp)) 
         
         #energy = [batch size, src len, dec hid dim]
 
@@ -142,7 +234,6 @@ class Attention(nn.Module):
         return F.softmax(attention, dim=1)
 
 
-# Decoder
 class Decoder(nn.Module):
     def __init__(self, output_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout, attention):
         super().__init__()
@@ -218,7 +309,6 @@ class Decoder(nn.Module):
         return prediction, hidden.squeeze(0)
 
 
-#Seq2Seq
 class Seq2Seq(nn.Module):
     def __init__(self, encoder, decoder, device):
         super().__init__()
@@ -270,9 +360,8 @@ class Seq2Seq(nn.Module):
         return outputs
 
 
-# Train the seq2seq model
-INPUT_DIM = len(SRC.vocab)
-OUTPUT_DIM = len(TRG.vocab)
+INPUT_DIM = len(train_dataset.vocab_stoi)
+OUTPUT_DIM = len(train_dataset.vocab_stoi)
 ENC_EMB_DIM = 256
 DEC_EMB_DIM = 256
 ENC_HID_DIM = 512
@@ -286,6 +375,8 @@ dec = Decoder(OUTPUT_DIM, DEC_EMB_DIM, ENC_HID_DIM, DEC_HID_DIM, DEC_DROPOUT, at
 
 model = Seq2Seq(enc, dec, device).to(device)
 
+"""We use a simplified version of the weight initialization scheme used in the paper. Here, we will initialize all biases to zero and all weights from $\mathcal{N}(0, 0.01)$."""
+
 def init_weights(m):
     for name, param in m.named_parameters():
         if 'weight' in name:
@@ -295,31 +386,40 @@ def init_weights(m):
             
 model.apply(init_weights)
 
+"""Calculate the number of parameters. We get an increase of almost 50% in the amount of parameters from the last model. """
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 print(f'The model has {count_parameters(model):,} trainable parameters')
 
+"""We create an optimizer."""
+
 optimizer = optim.Adam(model.parameters())
 
-TRG_PAD_IDX = TRG.vocab.stoi[TRG.pad_token]
+"""We initialize the loss function."""
+target_pad_token_idx =  train_dataset.vocab_stoi["<pad>"]
+criterion = nn.CrossEntropyLoss(ignore_index=target_pad_token_idx)
 
-criterion = nn.CrossEntropyLoss(ignore_index = TRG_PAD_IDX)
+"""We then create the training loop..."""
 
 def train(model, iterator, optimizer, criterion, clip):
     
     model.train()
     
     epoch_loss = 0
-    
-    for i, batch in enumerate(iterator):
-        
-        src = batch.src
-        trg = batch.trg
+
+    iterator.create_batches()
+    i = 0
+    for batch in iterator.batches:
+
+        src_batch, trg_batch = train_dataset.pad_batch(batch)
+        src_batch = src_batch.to(device)
+        trg_batch = trg_batch.to(device)
         
         optimizer.zero_grad()
         
-        output = model(src, trg)
+        output = model(src_batch, trg_batch)
         
         #trg = [trg len, batch size]
         #output = [trg len, batch size, output dim]
@@ -327,12 +427,12 @@ def train(model, iterator, optimizer, criterion, clip):
         output_dim = output.shape[-1]
         
         output = output[1:].view(-1, output_dim)
-        trg = trg[1:].view(-1)
+        trg_batch = trg_batch[1:].view(-1)
         
         #trg = [(trg len - 1) * batch size]
         #output = [(trg len - 1) * batch size, output dim]
         
-        loss = criterion(output, trg)
+        loss = criterion(output, trg_batch)
         
         loss.backward()
         
@@ -342,8 +442,12 @@ def train(model, iterator, optimizer, criterion, clip):
         
         epoch_loss += loss.item()
         
+        print(f"Batch: {i+1:03}/{len(iterator)}, loss: {loss.item()}")
+        i += 1
+
     return epoch_loss / len(iterator)
 
+"""...and the evaluation loop, remembering to set the model to `eval` mode and turn off teaching forcing."""
 
 def evaluate(model, iterator, criterion):
     
@@ -353,12 +457,15 @@ def evaluate(model, iterator, criterion):
     
     with torch.no_grad():
     
-        for i, batch in enumerate(iterator):
+        iterator.create_batches()
+        i = 1
+        for batch in iterator.batches:
 
-            src = batch.src
-            trg = batch.trg
+            src_batch, trg_batch = valid_dataset.pad_batch(batch)
+            src_batch = src_batch.to(device)
+            trg_batch = trg_batch.to(device)
 
-            output = model(src, trg, 0) #turn off teacher forcing
+            output = model(src_batch, trg_batch, 0) #turn off teacher forcing
 
             #trg = [trg len, batch size]
             #output = [trg len, batch size, output dim]
@@ -366,17 +473,22 @@ def evaluate(model, iterator, criterion):
             output_dim = output.shape[-1]
             
             output = output[1:].view(-1, output_dim)
-            trg = trg[1:].view(-1)
+            trg_batch = trg_batch[1:].view(-1)
 
             #trg = [(trg len - 1) * batch size]
             #output = [(trg len - 1) * batch size, output dim]
 
-            loss = criterion(output, trg)
+            loss = criterion(output, trg_batch)
 
             epoch_loss += loss.item()
+
+            if (i+1)%10 == 0:
+                print(f"Batch: {i+1:03}/{len(iterator)}, loss: {loss.item()}")
+            i += 1
         
     return epoch_loss / len(iterator)
 
+"""Finally, define a timing function."""
 
 def epoch_time(start_time, end_time):
     elapsed_time = end_time - start_time
@@ -384,8 +496,9 @@ def epoch_time(start_time, end_time):
     elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
     return elapsed_mins, elapsed_secs
 
+"""Then, we train our model, saving the parameters that give us the best validation loss."""
 
-N_EPOCHS = 100
+N_EPOCHS = 10
 CLIP = 1
 
 best_valid_loss = float('inf')
@@ -403,15 +516,8 @@ for epoch in range(N_EPOCHS):
     
     if valid_loss < best_valid_loss:
         best_valid_loss = valid_loss
-        torch.save(model.state_dict(), 'tut3-model.pt')
+        torch.save(model.state_dict(), 'nmt.pt')
     
     print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
     print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
     print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
-
-
-model.load_state_dict(torch.load('tut3-model.pt'))
-
-test_loss = evaluate(model, test_iterator, criterion)
-
-print(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} |')
