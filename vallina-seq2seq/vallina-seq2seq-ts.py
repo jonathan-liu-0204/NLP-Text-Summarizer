@@ -118,17 +118,16 @@ class CNNDailyDataset(Dataset):
 load spacy model according to the language 
 used in dataset (English and German)
 """
-spacy_de = spacy.load("de_core_news_sm")
-space_en = spacy.load("en_core_web_sm")
+spacy_en = spacy.load("en_core_web_sm")
 
 def transform_src(text):
-    tokens = spacy_de.tokenizer(text.lower())
+    tokens = spacy_en.tokenizer(text.lower())
     tokens = [tok.text for tok in tokens]
     tokens = ['<sos>'] + tokens + ['<eos>']
     return tokens
 
 def transform_trg(text):
-    tokens = space_en.tokenizer(text.lower())
+    tokens = spacy_en.tokenizer(text.lower())
     tokens = [tok.text for tok in tokens]
     tokens = ['<sos>'] + tokens + ['<eos>']
     return tokens
@@ -181,6 +180,7 @@ In order to train model with gpu, we can move data (tensor) to gpu.
 """
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Current device: {device}")
 
 train_iterator = BucketIterator(
     train_dataset,
@@ -262,6 +262,7 @@ class Encoder(nn.Module):
         if self.debug:
             print(f'(in encoder\'s forward) input_batch shape = {input_batch.shape}')
         
+        input_batch = input_batch.to(device)
         embeded = self.embedding(input_batch)
 
         if self.debug:
@@ -339,6 +340,7 @@ class Decoder(nn.Module):
         if self.debug:
             print(f'(in decoder\'s forward) input_batch (after unsqueeze) shape = {input_batch.shape}')
 
+        input_batch = input_batch.to(device)
         embeded = self.embedding(input_batch)
         embeded = self.dropout(embeded)
 
@@ -567,6 +569,7 @@ def train(model, iterator, optimizer, criterion, clip):
         output_dim = output.shape[-1]
         output = output.view(-1, output_dim)
         trg_batch = trg_batch.view(-1)
+        trg_batch = trg_batch.to(device)
 
         # calculate loss
         loss = criterion(output, trg_batch)
@@ -621,13 +624,14 @@ def evaluate(model, iterator, criterion):
             output_dim = output.shape[-1]
             output = output.view(-1, output_dim)
             trg_batch = trg_batch.view(-1)
+            trg_batch = trg_batch.to(device)
 
             # calculate loss
             loss = criterion(output, trg_batch)
 
             epoch_loss += loss.item()
 
-            if i%10 == 0:
+            if (i+1)%10 == 0:
                 print(f"Batch: {i+1:03}/{len(iterator)}, loss: {loss.item()}")
             i += 1
 
