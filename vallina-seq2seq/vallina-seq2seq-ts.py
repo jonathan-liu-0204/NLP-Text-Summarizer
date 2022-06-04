@@ -655,7 +655,7 @@ We start training seq2seq model! In each epoch, we check the loss of validation,
 we will save the current model.
 """
 
-N_EPOCHS = 10
+N_EPOCHS = 30
 CLIP = 1
 
 best_valid_loss = float('inf')
