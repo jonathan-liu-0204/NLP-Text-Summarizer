@@ -655,7 +655,7 @@ We start training seq2seq model! In each epoch, we check the loss of validation,
 we will save the current model.
 """
 
-N_EPOCHS = 50
+N_EPOCHS = 60
 CLIP = 1
 
 best_valid_loss = float('inf')
@@ -679,6 +679,6 @@ for epoch in range(N_EPOCHS):
         torch.save(model.state_dict(), "vallina-seq2seq.pt")
     
     print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
-    print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
-    print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
+    print(f'\tEpoch: {epoch+1:02} | Train Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
+    print(f'\tEpoch: {epoch+1:02} | Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
 # %%
