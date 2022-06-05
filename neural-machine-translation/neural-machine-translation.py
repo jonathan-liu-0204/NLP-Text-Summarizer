@@ -132,7 +132,7 @@ print(f"Current device: {device}")
 
 """Create the iterators."""
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 
 train_iterator = BucketIterator(
     train_dataset,
