@@ -498,7 +498,7 @@ def epoch_time(start_time, end_time):
 
 """Then, we train our model, saving the parameters that give us the best validation loss."""
 
-N_EPOCHS = 10
+N_EPOCHS = 50
 CLIP = 1
 
 best_valid_loss = float('inf')
