@@ -15,7 +15,7 @@ train_data = dataset['train']
 train_data.to_csv(os.path.join(dataset_path, "train.csv"))
 train_data = pd.read_csv(os.path.join(dataset_path, "train.csv"))
 print(f"Only save 50000/{len(train_data)} training samples")
-train_data = train_data.iloc[:50000]
+train_data = train_data.iloc[:60000]
 train_data.to_csv(os.path.join(dataset_path, "train.csv"))
 
 print("Convert validation dataset to csv")
